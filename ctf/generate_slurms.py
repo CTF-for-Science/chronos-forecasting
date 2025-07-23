@@ -12,8 +12,8 @@ cmd_template = \
 #SBATCH --ntasks=1
 #SBATCH --gpus=1
 #SBATCH --mem={memory}G
-#SBATCH --cpus-per-task=8
-#SBATCH --time=7-00:00:00
+#SBATCH --cpus-per-task=5
+#SBATCH --time=4-00:00:00
 #SBATCH --nice=0
 
 #SBATCH --job-name="{identifier}"
@@ -58,8 +58,8 @@ pair_ids = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 validations = [0, 1]
 recon_ctxs = [20]
 account = "amath"
-partition = "ckpt-g2"
-memory = 64
+partition = "gpu-rtx6k"
+memory = 45
 
 skip_count = 0
 write_count = 0
