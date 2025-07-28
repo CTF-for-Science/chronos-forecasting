@@ -35,17 +35,9 @@ echo "Running Apptainer"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-apptainer run --nv --cwd "/app/code" --bind "$repo":"/app/code" "$repo"/apptainer/gpu.sif python -u /app/code/ctf/forecast_ctf_os.py --dataset $dataset --pair_id $pair_id --validation $validation --identifier $identifier
+apptainer run --nv --cwd "/app/code" --overlay "$repo"/apptainer/overlay.img --no-home --contain --bind "$repo":"/app/code" "$repo"/apptainer/gpu.sif python -u /app/code/ctf/forecast_ctf_os.py --dataset $dataset --pair_id $pair_id --validation $validation --identifier $identifier
 
 echo "Finished running Apptainer"
-
-#echo "Running Python"
-
-#source "$repo"/.venv/bin/activate
-
-#python -u "$repo"/ctf/forecast_ctf.py --dataset "$dataset" --pair_id "$pair_id" --recon_ctx "$recon_ctx" --validation "$validation" --identifier "$identifier"
-
-#echo "Finished running Python"
 """
 
 # Clean up slurm repo
@@ -53,9 +45,9 @@ slurm_dir = top_dir / 'slurms'
 for file in slurm_dir.glob('*.slurm'):
     file.unlink()
 
-datasets = ["KS_Official", "Lorenz_Official", "ODE_Lorenz", "PDE_KS"]
+datasets = ["KS_Official", "Lorenz_Official"]
 pair_ids = [1, 2, 3, 4, 5, 6, 7, 8, 9]
-validations = [0, 1]
+validations = [0]
 recon_ctxs = [20]
 account = "amath"
 partition = "gpu-rtx6k"
@@ -94,6 +86,7 @@ for validation in validations:
 
                 with open(top_dir / 'slurms' / f'{identifier}.slurm', "w") as f:
                     f.write(cmd)
+                    print(f"Making {identifier}.slurm")
                     write_count += 1
 
 print(f"Skipped {skip_count} jobs")
