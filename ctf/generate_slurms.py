@@ -35,7 +35,7 @@ echo "Running Apptainer"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-apptainer run --nv --cwd "/app/code" --overlay "$repo"/apptainer/overlay.img --no-home --contain --bind "$repo":"/app/code" "$repo"/apptainer/gpu.sif python -u /app/code/ctf/forecast_ctf_os.py --dataset $dataset --pair_id $pair_id --validation $validation --identifier $identifier
+apptainer run --nv --cwd "/app/code" --overlay "$repo"/apptainer/overlay.img:ro --no-home --contain --bind "$repo":"/app/code" "$repo"/apptainer/gpu.sif python -u /app/code/ctf/forecast_ctf_os.py --dataset $dataset --pair_id $pair_id --validation $validation --identifier $identifier
 
 echo "Finished running Apptainer"
 """

@@ -2,6 +2,11 @@
 <img src="https://raw.githubusercontent.com/amazon-science/chronos-forecasting/main/figures/chronos-logo.png" width="60%">
 </div>
 
+CTF Notes
+
+- Install the packages in `pyproject.toml`: `pip install .`  
+- Main codes are in the `ctf/` folder, use `run.py`
+
 <div align="center">
 
 # Chronos: Learning the Language of Time Series
