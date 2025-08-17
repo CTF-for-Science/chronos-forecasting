@@ -7,6 +7,16 @@ CTF Notes
 - Install the packages in `pyproject.toml`: `pip install .`  
 - Main codes are in the `ctf/` folder, use `run.py`
 
+```bash
+pyenv install 3.11.11
+pyenv local 3.11.11
+python -m venv ~/.virtualenvs/chronos
+source ~/.virtualenvs/chronos/bin/activate
+pip install .
+cd ../../
+pip install -e .[all]
+```
+
 <div align="center">
 
 # Chronos: Learning the Language of Time Series
