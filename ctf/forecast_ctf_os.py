@@ -29,7 +29,7 @@ def main(args=None):
     MODEL = "amazon/chronos-t5-base"  # model name
     pipeline = BaseChronosPipeline.from_pretrained(
         MODEL,  # use "amazon/chronos-bolt-small" for the corresponding Chronos-Bolt model
-        device_map="cuda",  # use "cpu" for CPU inference
+        device_map=args.device,  # use "cpu" for CPU inference
         torch_dtype=torch.bfloat16,
     )
 
@@ -132,7 +132,10 @@ def main(args=None):
     if args.validation:
         print("> Expected Shape: ", val_data.shape)
     else:
-        print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.mat'])
+        if args.dataset in ['seismo']:
+            print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.npz'])
+        else:
+            print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.mat'])
 
     # ## Save prediction matrix
     with open(pickle_dir / f"{args.identifier}.pkl", "wb") as f:
@@ -146,6 +149,7 @@ if __name__ == '__main__':
     parser.add_argument('--pair_id', type=int, default=1, help="Pair_id to run (1-9)")
     parser.add_argument('--recon_ctx', type=int, default=20, help="Context length for reconstruction")
     parser.add_argument('--validation', type=int, default=0, help="Generate and use validation set")
+    parser.add_argument('--device', type=str, default=None, required=True, help="Device to run on")
     args = parser.parse_args()
 
     # Args

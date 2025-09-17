@@ -168,3 +168,5 @@ cython_debug/
 *.slurm
 *.pkl
 *.out
+bash/
+.python-version
