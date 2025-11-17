@@ -4,6 +4,7 @@
 
 # ## Imports
 
+import sys
 import time
 import torch
 import pickle
@@ -22,6 +23,9 @@ ckpt_dir = top_dir / 'checkpoints'
 pickle_dir.mkdir(parents=True, exist_ok=True)
 
 def main(args=None):
+    # Start timing from the beginning of main
+    main_start_time = time.time()
+    
     # ## Model Parameters
 
     print("> Setting up model parameters")
@@ -92,6 +96,14 @@ def main(args=None):
     # Forecast each column
     print("> Predicting...")
     for i in range(len(pred_l), train_mat.shape[1]):
+        # Check if max time has been exceeded
+        if args.max_time_hours is not None:
+            elapsed_hours = (time.time() - main_start_time) / 3600.0
+            if elapsed_hours > args.max_time_hours:
+                print(f"> Maximum time of {args.max_time_hours} hours exceeded ({elapsed_hours:.2f} hours elapsed)")
+                print(f"> Exiting after {i} dimensions (out of {train_mat.shape[1]})")
+                sys.exit(1)
+        
         quantiles, mean = pipeline.predict_quantiles(
             context=torch.tensor(train_mat[:,i]),
             prediction_length=forecast_length,
@@ -150,6 +162,7 @@ if __name__ == '__main__':
     parser.add_argument('--recon_ctx', type=int, default=20, help="Context length for reconstruction")
     parser.add_argument('--validation', type=int, default=0, help="Generate and use validation set")
     parser.add_argument('--device', type=str, default=None, required=True, help="Device to run on")
+    parser.add_argument('--max_time_hours', type=float, default=None, help="Maximum time in hours for the forecast loop")
     args = parser.parse_args()
 
     # Args
