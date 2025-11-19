@@ -35,7 +35,7 @@ echo "Finished running Python"
 """
 
 # Parameters
-n_parallel = 1
+n_parallel = 2
 datasets = ["ocean_das"]
 pair_ids = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 seeds = [1]

@@ -144,7 +144,7 @@ def main(args=None):
     if args.validation:
         print("> Expected Shape: ", val_data.shape)
     else:
-        if args.dataset in ['seismo']:
+        if args.dataset in ['seismo', 'ocean_das']:
             print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.npz'])
         else:
             print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.mat'])
