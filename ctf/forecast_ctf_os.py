@@ -20,6 +20,7 @@ from ctf4science.data_module import load_validation_dataset, load_dataset, get_p
 top_dir = Path(__file__).parent.parent
 pickle_dir = top_dir / 'pickles'
 ckpt_dir = top_dir / 'checkpoints'
+ckpt_dir.mkdir(parents=True, exist_ok=True)
 pickle_dir.mkdir(parents=True, exist_ok=True)
 
 def main(args=None):
@@ -77,7 +78,6 @@ def main(args=None):
         # Burn-in
         print(f"> Burn-in matrix of size {init_data.shape[0]}, using {forecast_length} forecast length")
         train_mat = init_data
-        forecast_length = forecast_length - init_data.shape[0]
     else:
         raise ValueError(f"Pair id {pair_id} not supported")
 
@@ -135,7 +135,7 @@ def main(args=None):
         pred = raw_pred
     elif pair_id in [8, 9]:
         # Burn-in
-        pred = np.vstack([train_mat, raw_pred])
+        pred = raw_pred
     else:
         raise ValueError(f"Pair id {pair_id} not supported") 
 
@@ -144,7 +144,7 @@ def main(args=None):
     if args.validation:
         print("> Expected Shape: ", val_data.shape)
     else:
-        if args.dataset in ['seismo', 'ocean_das']:
+        if args.dataset in ['seismo', 'ocean_das', 'msfr']:
             print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.npz'])
         else:
             print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.mat'])
