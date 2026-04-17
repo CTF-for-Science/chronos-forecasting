@@ -4,6 +4,7 @@
 
 # ## Imports
 
+import sys
 import time
 import torch
 import pickle
@@ -12,25 +13,36 @@ import numpy as np
 import pprint as pp
 import pandas as pd  # requires: pip install pandas
 from pathlib import Path
-from chronos import BaseChronosPipeline
+from chronos import BaseChronosPipeline, Chronos2Pipeline
 
 from ctf4science.data_module import load_validation_dataset, load_dataset, get_prediction_timesteps, get_validation_prediction_timesteps, get_validation_training_timesteps, get_metadata
 
 top_dir = Path(__file__).parent.parent
 pickle_dir = top_dir / 'pickles'
+ckpt_dir = top_dir / 'checkpoints'
+ckpt_dir.mkdir(parents=True, exist_ok=True)
 pickle_dir.mkdir(parents=True, exist_ok=True)
 
 def main(args=None):
+    # Start timing from the beginning of main
+    main_start_time = time.time()
+
     # ## Model Parameters
 
     print("> Setting up model parameters")
 
-    MODEL = "amazon/chronos-t5-base"  # model name
-    pipeline = BaseChronosPipeline.from_pretrained(
-        MODEL,  # use "amazon/chronos-bolt-small" for the corresponding Chronos-Bolt model
-        device_map="cuda",  # use "cpu" for CPU inference
-        torch_dtype=torch.bfloat16,
-    )
+    if args.model == 'chronos-2':
+        pipeline = Chronos2Pipeline.from_pretrained(
+            "amazon/chronos-2",
+            device_map=args.device,
+            torch_dtype=torch.bfloat16,
+        )
+    else:
+        pipeline = BaseChronosPipeline.from_pretrained(
+            "amazon/chronos-t5-base",
+            device_map=args.device,
+            torch_dtype=torch.bfloat16,
+        )
 
     # ## Data
 
@@ -77,35 +89,74 @@ def main(args=None):
 
     # Model variables
     PDT = 10
-    CTX = min(train_mat.shape[0], 200)
+    CTX = min(train_mat.shape[0], 10)
 
     print("> Model variables:")
     print(f"  PDT: {PDT}")
     print(f"  CTX: {CTX}")
 
+    # Load checkpoint if available (saves raw_preds list and current train_mat state)
+    ckpt_path = ckpt_dir / f"{args.identifier}.pkl"
+    if ckpt_path.exists():
+        print(f"> Loading saved predictions from {ckpt_path}")
+        with open(ckpt_path, "rb") as f:
+            raw_preds, train_mat = pickle.load(f)
+        print(f"  Starting with {len(raw_preds)} AR steps completed")
+    else:
+        print(f"> No checkpoint found at {ckpt_path}, starting fresh")
+        raw_preds = []
+
     # Loop until we have forecast_length data points
     forecast_loops = forecast_length // PDT + (forecast_length % PDT > 0)
-    raw_preds = []
-    for i in range(forecast_loops):
-        print(f"> ({i+1}/{forecast_loops}) Input Shape:", train_mat.shape)
+    print("> Predicting...")
+    for loop_i in range(len(raw_preds), forecast_loops):
+        # Check if max time has been exceeded
+        if args.max_time_hours is not None:
+            elapsed_hours = (time.time() - main_start_time) / 3600.0
+            if elapsed_hours > args.max_time_hours:
+                print(f"> Maximum time of {args.max_time_hours} hours exceeded ({elapsed_hours:.2f} hours elapsed)")
+                print(f"> Exiting after {loop_i} AR steps (out of {forecast_loops})")
+                sys.exit(1)
 
-        # Forecast each columns
-        pred_l = []
-        for i in range(train_mat.shape[1]):
-            quantiles, mean = pipeline.predict_quantiles(
-                context=torch.tensor(train_mat[:,i]),
+        ctx = train_mat[-CTX:, :]
+        print(f"> ({loop_i+1}/{forecast_loops}) Context Shape: {ctx.shape}")
+
+        if args.model == 'chronos-2':
+            n_timesteps, n_dims = ctx.shape
+            target_cols = [f"dim_{i}" for i in range(n_dims)]
+            context_df = pd.DataFrame({
+                'id': 'series_0',
+                'timestamp': pd.date_range(start='2000-01-01', periods=n_timesteps, freq='s'),
+                **{col: ctx[:, i] for i, col in enumerate(target_cols)},
+            })
+
+            pred_df = pipeline.predict_df(
+                context_df,
                 prediction_length=PDT,
                 quantile_levels=[0.5],
+                id_column='id',
+                timestamp_column='timestamp',
+                target=target_cols,
             )
 
-            pred_l.append(mean)
+            median_cols = [f"{col}_0.5" for col in target_cols]
+            raw_pred = pred_df[median_cols].values  # shape: (PDT, n_dims)
+        else:
+            pred_l = []
+            for col_i in range(ctx.shape[1]):
+                quantiles, mean = pipeline.predict_quantiles(
+                    context=torch.tensor(ctx[:, col_i]),
+                    prediction_length=PDT,
+                    quantile_levels=[0.5],
+                )
+                pred_l.append(mean)
+            raw_pred = torch.concatenate(pred_l, dim=0).T.numpy()
 
-        # Save prediction
-        raw_pred = torch.concatenate(pred_l, dim=0).T
         raw_preds.append(raw_pred)
-
-        # Append to train_mat
         train_mat = np.vstack([train_mat, raw_pred])
+
+        with open(ckpt_path, "wb") as f:
+            pickle.dump((raw_preds, train_mat), f)
 
     raw_pred = np.concatenate(raw_preds, axis=0)
     raw_pred = raw_pred[0:forecast_length, :]
@@ -125,14 +176,17 @@ def main(args=None):
         # Burn-in
         pred = raw_pred
     else:
-        raise ValueError(f"Pair id {pair_id} not supported") 
+        raise ValueError(f"Pair id {pair_id} not supported")
 
     print("> Predicted Matrix Shape:", pred.shape)
-    
+
     if args.validation:
         print("> Expected Shape: ", val_data.shape)
     else:
-        print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.mat'])
+        if args.dataset in ['seismo', 'ocean_das', 'msfr']:
+            print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.npz'])
+        else:
+            print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.mat'])
 
     # ## Save prediction matrix
     with open(pickle_dir / f"{args.identifier}.pkl", "wb") as f:
@@ -142,10 +196,13 @@ if __name__ == '__main__':
     # To allow CLIs
     parser = argparse.ArgumentParser()
     parser.add_argument('--identifier', type=str, default=None, required=True, help="Identifier for the run")
+    parser.add_argument('--model', type=str, default='chronos-t5-base', choices=['chronos-t5-base', 'chronos-2'], help="Model to use (chronos-t5-base or chronos-2)")
     parser.add_argument('--dataset', type=str, default=None, required=True, help="Dataset to run (ODE_Lorenz or PDE_KS)")
     parser.add_argument('--pair_id', type=int, default=1, help="Pair_id to run (1-9)")
     parser.add_argument('--recon_ctx', type=int, default=20, help="Context length for reconstruction")
     parser.add_argument('--validation', type=int, default=0, help="Generate and use validation set")
+    parser.add_argument('--device', type=str, default=None, required=True, help="Device to run on")
+    parser.add_argument('--max_time_hours', type=float, default=None, help="Maximum time in hours for the forecast loop")
     args = parser.parse_args()
 
     # Args
@@ -154,17 +211,17 @@ if __name__ == '__main__':
 
     # Start timing
     start_time = time.time()
-    
+
     main(args)
-    
+
     # End timing and calculate duration
     end_time = time.time()
     duration = end_time - start_time
-    
+
     # Convert to HH:MM:SS format
     hours = int(duration // 3600)
     minutes = int((duration % 3600) // 60)
     seconds = int(duration % 60)
-    
+
     print(f"> Total execution time: {hours:02d}:{minutes:02d}:{seconds:02d}")
-        
+

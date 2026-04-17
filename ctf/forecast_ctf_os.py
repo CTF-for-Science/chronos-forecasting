@@ -13,7 +13,7 @@ import numpy as np
 import pprint as pp
 import pandas as pd  # requires: pip install pandas
 from pathlib import Path
-from chronos import BaseChronosPipeline
+from chronos import BaseChronosPipeline, Chronos2Pipeline
 
 from ctf4science.data_module import load_validation_dataset, load_dataset, get_prediction_timesteps, get_validation_prediction_timesteps, get_validation_training_timesteps, get_metadata
 
@@ -31,12 +31,18 @@ def main(args=None):
 
     print("> Setting up model parameters")
 
-    MODEL = "amazon/chronos-t5-base"  # model name
-    pipeline = BaseChronosPipeline.from_pretrained(
-        MODEL,  # use "amazon/chronos-bolt-small" for the corresponding Chronos-Bolt model
-        device_map=args.device,  # use "cpu" for CPU inference
-        torch_dtype=torch.bfloat16,
-    )
+    if args.model == 'chronos-2':
+        pipeline = Chronos2Pipeline.from_pretrained(
+            "amazon/chronos-2",
+            device_map=args.device,
+            torch_dtype=torch.bfloat16,
+        )
+    else:
+        pipeline = BaseChronosPipeline.from_pretrained(
+            "amazon/chronos-t5-base",
+            device_map=args.device,
+            torch_dtype=torch.bfloat16,
+        )
 
     # ## Data
 
@@ -81,47 +87,66 @@ def main(args=None):
     else:
         raise ValueError(f"Pair id {pair_id} not supported")
 
-    # Initialize list containing predictions for each column
-    #   First check if pickle exists
-    ckpt_path = ckpt_dir / f"{args.identifier}.pkl"
-    if ckpt_path.exists():
-        print(f"> Loading saved predictions from {ckpt_path}")
-        with open(ckpt_path, "rb") as f:
-            pred_l = pickle.load(f)
-        print(f"  Starting with {len(pred_l)} predictions")
-    else:
-        print(f"> No prediction found at {ckpt_path}, initializing pred_l as empty list ([])")
-        pred_l = []
-
-    # Forecast each column
     print("> Predicting...")
-    for i in range(len(pred_l), train_mat.shape[1]):
-        # Check if max time has been exceeded
-        if args.max_time_hours is not None:
-            elapsed_hours = (time.time() - main_start_time) / 3600.0
-            if elapsed_hours > args.max_time_hours:
-                print(f"> Maximum time of {args.max_time_hours} hours exceeded ({elapsed_hours:.2f} hours elapsed)")
-                print(f"> Exiting after {i} dimensions (out of {train_mat.shape[1]})")
-                sys.exit(1)
-        
-        quantiles, mean = pipeline.predict_quantiles(
-            context=torch.tensor(train_mat[:,i]),
+    if args.model == 'chronos-2':
+        # Multivariate prediction: all dimensions at once
+        n_timesteps, n_dims = train_mat.shape
+        target_cols = [f"dim_{i}" for i in range(n_dims)]
+        context_df = pd.DataFrame({
+            'id': 'series_0',
+            'timestamp': pd.date_range(start='2000-01-01', periods=n_timesteps, freq='s'),
+            **{col: train_mat[:, i] for i, col in enumerate(target_cols)},
+        })
+
+        pred_df = pipeline.predict_df(
+            context_df,
             prediction_length=forecast_length,
             quantile_levels=[0.5],
+            id_column='id',
+            timestamp_column='timestamp',
+            target=target_cols,
         )
 
-        pred_l.append(mean)
+        # Extract median (0.5 quantile) for each dimension
+        median_cols = [f"{col}_0.5" for col in target_cols]
+        raw_pred = pred_df[median_cols].values  # shape: (forecast_length, n_dims)
+        print(f"  Predicted all {n_dims} dims at once")
+    else:
+        # Univariate column-by-column prediction with checkpointing
+        ckpt_path = ckpt_dir / f"{args.identifier}.pkl"
+        if ckpt_path.exists():
+            print(f"> Loading saved predictions from {ckpt_path}")
+            with open(ckpt_path, "rb") as f:
+                pred_l = pickle.load(f)
+            print(f"  Starting with {len(pred_l)} predictions")
+        else:
+            print(f"> No prediction found at {ckpt_path}, initializing pred_l as empty list ([])")
+            pred_l = []
 
-        # Save prediction
-        with open(ckpt_path, "wb") as f:
-            pickle.dump(pred_l, f)
+        for i in range(len(pred_l), train_mat.shape[1]):
+            if args.max_time_hours is not None:
+                elapsed_hours = (time.time() - main_start_time) / 3600.0
+                if elapsed_hours > args.max_time_hours:
+                    print(f"> Maximum time of {args.max_time_hours} hours exceeded ({elapsed_hours:.2f} hours elapsed)")
+                    print(f"> Exiting after {i} dimensions (out of {train_mat.shape[1]})")
+                    sys.exit(1)
 
-        print(f"  Predicted dim {i+1} of {train_mat.shape[1]}")
+            quantiles, mean = pipeline.predict_quantiles(
+                context=torch.tensor(train_mat[:, i]),
+                prediction_length=forecast_length,
+                quantile_levels=[0.5],
+            )
 
-    # Save prediction
-    raw_pred = torch.concatenate(pred_l, dim=0).T
+            pred_l.append(mean)
 
-    print("> Concatenated Shape", raw_pred.shape)
+            with open(ckpt_path, "wb") as f:
+                pickle.dump(pred_l, f)
+
+            print(f"  Predicted dim {i+1} of {train_mat.shape[1]}")
+
+        raw_pred = torch.concatenate(pred_l, dim=0).T.numpy()
+
+    print("> Raw Prediction Shape", raw_pred.shape)
 
     print("> Creating prediction matrix")
 
@@ -157,6 +182,7 @@ if __name__ == '__main__':
     # To allow CLIs
     parser = argparse.ArgumentParser()
     parser.add_argument('--identifier', type=str, default=None, required=True, help="Identifier for the run")
+    parser.add_argument('--model', type=str, default='chronos-t5-base', choices=['chronos-t5-base', 'chronos-2'], help="Model to use (chronos-t5-base or chronos-2)")
     parser.add_argument('--dataset', type=str, default=None, required=True, help="Dataset to run (ODE_Lorenz or PDE_KS)")
     parser.add_argument('--pair_id', type=int, default=1, help="Pair_id to run (1-9)")
     parser.add_argument('--recon_ctx', type=int, default=20, help="Context length for reconstruction")

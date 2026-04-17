@@ -23,7 +23,7 @@ source /home/alexey/.virtualenvs/chronos/bin/activate
 
 bash_template_1 = \
 """\
-time python -u $repo/ctf/forecast_ctf_os.py --dataset "{dataset}" --pair_id "{pair_id}" --recon_ctx "{recon_ctx}" --validation "{validation}" --identifier "{identifier}" --device cuda:0 --max_time_hours "{max_time_hours}"
+time python -u $repo/ctf/forecast_ctf_ar.py --dataset "{dataset}" --pair_id "{pair_id}" --recon_ctx "{recon_ctx}" --validation "{validation}" --identifier "{identifier}" --device cuda:0 --max_time_hours "{max_time_hours}" --model "{model}"
 
 """
 
@@ -41,6 +41,7 @@ seeds = [1]
 validation = 0
 recon_ctx = 50
 max_time_hours = 16
+models = ["chronos-2"]
 
 # Create and clean up bash repo
 bash_dir = top_dir / 'bash'
@@ -49,7 +50,7 @@ for file in bash_dir.glob('*.sh'):
     file.unlink()
 
 device_counter = 0
-devices = ["cuda:1"]
+devices = ["cuda:2"]
 total_scripts = len(devices) * n_parallel
 
 # Initialize bash scripts for each device and parallel index
@@ -62,29 +63,31 @@ for device in devices:
         bash_scripts[script_key] = bash_template_0.format(log_filename=log_filename, cuda_device=device_num)
 
 for dataset in datasets:
-    for pair_id in pair_ids:
-        for seed in seeds:
-            identifier = f"{dataset}_{pair_id}_seed{seed}"
+    for model in models:
+        for pair_id in pair_ids:
+            for seed in seeds:
+                identifier = f"{dataset}_{pair_id}_seed{seed}_{model}"
 
-            # Determine which device and parallel script to use based on counter
-            device_idx = device_counter % len(devices)
-            parallel_idx = (device_counter // len(devices)) % n_parallel
-            current_device = devices[device_idx]
-            script_key = f"{current_device}_{parallel_idx}"
-            
-            cmd = bash_template_1.format(
-                dataset=dataset,
-                pair_id=pair_id,
-                recon_ctx=recon_ctx,
-                validation=validation,
-                identifier=identifier,
-                max_time_hours=max_time_hours,
-            )
+                # Determine which device and parallel script to use based on counter
+                device_idx = device_counter % len(devices)
+                parallel_idx = (device_counter // len(devices)) % n_parallel
+                current_device = devices[device_idx]
+                script_key = f"{current_device}_{parallel_idx}"
+                
+                cmd = bash_template_1.format(
+                    dataset=dataset,
+                    pair_id=pair_id,
+                    recon_ctx=recon_ctx,
+                    validation=validation,
+                    identifier=identifier,
+                    max_time_hours=max_time_hours,
+                    model=model,
+                )
 
-            # Add the command to the appropriate bash script
-            bash_scripts[script_key] += cmd
+                # Add the command to the appropriate bash script
+                bash_scripts[script_key] += cmd
 
-            device_counter += 1
+                device_counter += 1
 
 # Add the closing template to each script and write to files
 for script_key, script_content in bash_scripts.items():
