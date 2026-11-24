@@ -4,6 +4,7 @@
 
 # ## Imports
 
+import os
 import sys
 import time
 import torch
@@ -13,15 +14,36 @@ import numpy as np
 import pprint as pp
 import pandas as pd  # requires: pip install pandas
 from pathlib import Path
-from chronos import BaseChronosPipeline, Chronos2Pipeline
+from chronos import BaseChronosPipeline
 
-from ctf4science.data_module import load_validation_dataset, load_dataset, get_prediction_timesteps, get_validation_prediction_timesteps, get_validation_training_timesteps, get_metadata
+from ctf4science.data_module import load_validation_dataset, load_dataset, get_prediction_timesteps, get_validation_prediction_timesteps, get_validation_training_timesteps, get_metadata, get_config
 
 top_dir = Path(__file__).parent.parent
 pickle_dir = top_dir / 'pickles'
 ckpt_dir = top_dir / 'checkpoints'
 ckpt_dir.mkdir(parents=True, exist_ok=True)
 pickle_dir.mkdir(parents=True, exist_ok=True)
+
+CKPT_INTERVAL_S = 600  # write checkpoints at most every 10 minutes (large pickles on GPFS)
+
+
+def chronos2_median(pred_df, target_cols):
+    """Return the 0.5-quantile forecast as an array of shape (n_steps, len(target_cols)).
+
+    Handles both the long output format of chronos-forecasting>=2.0
+    (columns 'target_name' and '0.5') and the older wide format ('<target>_0.5').
+    """
+    if 'target_name' in pred_df.columns:
+        q_col = '0.5' if '0.5' in pred_df.columns else 0.5
+        wide = pred_df.pivot(index='timestamp', columns='target_name', values=q_col)
+        return wide[target_cols].to_numpy()
+    return pred_df[[f"{col}_0.5" for col in target_cols]].values
+
+
+def expected_test_shape(dataset, pair_id, md):
+    """Look up the test matrix shape for a pair from the dataset YAML (works for .mat and .npz)."""
+    pair = next(p for p in get_config(dataset)['pairs'] if p['id'] == pair_id)
+    return md['matrix_shapes'].get(pair['test'])
 
 def main(args=None):
     # Start timing from the beginning of main
@@ -32,6 +54,7 @@ def main(args=None):
     print("> Setting up model parameters")
 
     if args.model == 'chronos-2':
+        from chronos import Chronos2Pipeline  # requires chronos-forecasting>=2.0
         pipeline = Chronos2Pipeline.from_pretrained(
             "amazon/chronos-2",
             device_map=args.device,
@@ -108,8 +131,7 @@ def main(args=None):
         )
 
         # Extract median (0.5 quantile) for each dimension
-        median_cols = [f"{col}_0.5" for col in target_cols]
-        raw_pred = pred_df[median_cols].values  # shape: (forecast_length, n_dims)
+        raw_pred = chronos2_median(pred_df, target_cols)  # shape: (forecast_length, n_dims)
         print(f"  Predicted all {n_dims} dims at once")
     else:
         # Univariate column-by-column prediction with checkpointing
@@ -118,31 +140,47 @@ def main(args=None):
             print(f"> Loading saved predictions from {ckpt_path}")
             with open(ckpt_path, "rb") as f:
                 pred_l = pickle.load(f)
-            print(f"  Starting with {len(pred_l)} predictions")
+            print(f"  Starting with {sum(p.shape[0] for p in pred_l)} predicted dims")
         else:
             print(f"> No prediction found at {ckpt_path}, initializing pred_l as empty list ([])")
             pred_l = []
 
-        for i in range(len(pred_l), train_mat.shape[1]):
+        def save_ckpt():
+            tmp_path = ckpt_path.with_suffix('.tmp')
+            with open(tmp_path, "wb") as f:
+                pickle.dump(pred_l, f)
+            os.replace(tmp_path, ckpt_path)
+
+        # Each entry of pred_l has shape (n_cols_in_batch, forecast_length)
+        n_dims = train_mat.shape[1]
+        i = sum(p.shape[0] for p in pred_l)
+        last_ckpt_time = time.time()
+        while i < n_dims:
             if args.max_time_hours is not None:
                 elapsed_hours = (time.time() - main_start_time) / 3600.0
                 if elapsed_hours > args.max_time_hours:
+                    save_ckpt()
                     print(f"> Maximum time of {args.max_time_hours} hours exceeded ({elapsed_hours:.2f} hours elapsed)")
-                    print(f"> Exiting after {i} dimensions (out of {train_mat.shape[1]})")
+                    print(f"> Exiting after {i} dimensions (out of {n_dims})")
                     sys.exit(1)
 
+            j = min(i + args.batch_size, n_dims)
             quantiles, mean = pipeline.predict_quantiles(
-                context=torch.tensor(train_mat[:, i]),
+                torch.tensor(np.ascontiguousarray(train_mat[:, i:j].T)),
                 prediction_length=forecast_length,
                 quantile_levels=[0.5],
             )
 
             pred_l.append(mean)
 
-            with open(ckpt_path, "wb") as f:
-                pickle.dump(pred_l, f)
+            if time.time() - last_ckpt_time > CKPT_INTERVAL_S:
+                save_ckpt()
+                last_ckpt_time = time.time()
 
-            print(f"  Predicted dim {i+1} of {train_mat.shape[1]}")
+            print(f"  Predicted dims {i+1}-{j} of {n_dims}")
+            i = j
+
+        save_ckpt()
 
         raw_pred = torch.concatenate(pred_l, dim=0).T.numpy()
 
@@ -169,10 +207,7 @@ def main(args=None):
     if args.validation:
         print("> Expected Shape: ", val_data.shape)
     else:
-        if args.dataset in ['seismo', 'ocean_das', 'msfr']:
-            print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.npz'])
-        else:
-            print("> Expected Shape: ", md['matrix_shapes'][f'X{pair_id}test.mat'])
+        print("> Expected Shape: ", expected_test_shape(args.dataset, pair_id, md))
 
     # ## Save prediction matrix
     with open(pickle_dir / f"{args.identifier}.pkl", "wb") as f:
@@ -189,6 +224,7 @@ if __name__ == '__main__':
     parser.add_argument('--validation', type=int, default=0, help="Generate and use validation set")
     parser.add_argument('--device', type=str, default=None, required=True, help="Device to run on")
     parser.add_argument('--max_time_hours', type=float, default=None, help="Maximum time in hours for the forecast loop")
+    parser.add_argument('--batch_size', type=int, default=1, help="Number of columns predicted per call for chronos-t5 (univariate, per-column model)")
     args = parser.parse_args()
 
     # Args

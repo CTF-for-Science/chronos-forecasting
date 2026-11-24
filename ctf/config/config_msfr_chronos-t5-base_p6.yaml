@@ -1,0 +1,11 @@
+dataset:
+  name: msfr
+  pair_id:
+  - 6
+model:
+  name: chronos-t5-base
+  variant: chronos-t5-base
+  forecaster: os
+  batch_size: 256
+  recon_ctx: 50
+  validation: 0

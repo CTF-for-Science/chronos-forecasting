@@ -6,6 +6,7 @@ CTF Notes
 
 - Install the packages in `pyproject.toml`: `pip install .`  
 - Main codes are in the `ctf/` folder, use `run.py`
+- The `chronos-2` variant requires `chronos-forecasting>=2.0` from PyPI: `pip install "chronos-forecasting>=2.0"`
 
 ```bash
 pyenv install 3.11.11

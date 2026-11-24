@@ -1,0 +1,11 @@
+dataset:
+  name: dynasty
+  pair_id:
+  - 2
+model:
+  name: chronos-t5-base
+  variant: chronos-t5-base
+  forecaster: os
+  batch_size: 16
+  recon_ctx: 50
+  validation: 0

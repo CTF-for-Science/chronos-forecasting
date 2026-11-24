@@ -1,0 +1,11 @@
+dataset:
+  name: msfr
+  pair_id:
+  - 7
+model:
+  name: chronos-2
+  variant: chronos-2
+  forecaster: ar
+  batch_size: 256
+  recon_ctx: 50
+  validation: 0

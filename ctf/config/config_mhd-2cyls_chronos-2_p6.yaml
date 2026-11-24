@@ -1,0 +1,11 @@
+dataset:
+  name: mhd-2cyls
+  pair_id:
+  - 6
+model:
+  name: chronos-2
+  variant: chronos-2
+  forecaster: ar
+  batch_size: 256
+  recon_ctx: 50
+  validation: 0

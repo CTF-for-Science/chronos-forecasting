@@ -41,3 +41,45 @@ for dataset in datasets:
         print(f"Generated: {filename}")
 
 print(f"Generated {len(datasets) * len(pair_ids)} config files")
+
+# Configs for the newer .npz datasets, one file per (dataset, variant, pair_id).
+# Chronos-2 is multivariate (all columns in one group): use the autoregressive forecaster
+# (CTX=10, PDT=10) on the very high-dimensional datasets, as was done for msfr.
+variant_config_template = \
+"""dataset:
+  name: {dataset}
+  pair_id:
+  - {pair_id}
+model:
+  name: {variant}
+  variant: {variant}
+  forecaster: {forecaster}
+  batch_size: {batch_size}
+  recon_ctx: 50
+  validation: 0
+"""
+
+variant_datasets = ["pke-hpmr", "dynasty", "msfr", "mhd-2cyls"]
+variants = {
+    # variant: (forecaster per dataset, batch_size per dataset)
+    "chronos-t5-base": ({ds: "os" for ds in variant_datasets}, {ds: 16 if ds == "dynasty" else 256 for ds in variant_datasets}),
+    "chronos-2": ({"pke-hpmr": "os", "dynasty": "os", "msfr": "ar", "mhd-2cyls": "ar"}, {ds: 256 for ds in variant_datasets}),
+}
+
+n_generated = 0
+for dataset in variant_datasets:
+    for variant, (forecasters, batch_sizes) in variants.items():
+        for pair_id in pair_ids:
+            filename = f"config_{dataset}_{variant}_p{pair_id}.yaml"
+            with open(config_dir / filename, 'w') as f:
+                f.write(variant_config_template.format(
+                    dataset=dataset,
+                    pair_id=pair_id,
+                    variant=variant,
+                    forecaster=forecasters[dataset],
+                    batch_size=batch_sizes[dataset],
+                ))
+            n_generated += 1
+            print(f"Generated: {filename}")
+
+print(f"Generated {n_generated} variant config files")
